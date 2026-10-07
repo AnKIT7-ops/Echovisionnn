@@ -1,47 +1,127 @@
-## YOLOv8n-based Navigation Announcer (Laptop Camera + Offline TTS)
+# EchoVision
 
-This project uses the laptop camera with YOLOv8n for continuous object detection and an offline text-to-speech engine to announce object positions like "pole on the right" or "person ahead". It only speaks when the scene changes to avoid spam.
+**Real-time spoken scene descriptions from a webcam, running fully offline.**
 
-### Features
-- YOLOv8n object detection (auto-downloads `yolov8n.pt` on first run)
-- Left / center / right spatial cues based on object positions
-- Offline TTS via `pyttsx3` (works without Internet)
-- Announces only on scene changes, with periodic refresh
-- Simple on-screen visualization for debugging
+EchoVision watches a live camera feed with YOLOv8n, works out where each object sits (left, ahead, right) and roughly how close it is, then says it out loud: *"person very close ahead; chair medium distance on the left"*. It only speaks when the scene changes, so it stays useful instead of noisy. The project is a prototype for assistive "conversational glasses" aimed at people with low vision.
 
-### Requirements
-- Python 3.10+
-- A working webcam
-- Windows (PowerShell) tested; should also work on Linux/macOS
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![YOLOv8](https://img.shields.io/badge/Ultralytics-YOLOv8n-111F68)
+![OpenCV](https://img.shields.io/badge/OpenCV-4.10-5C3EE8?logo=opencv&logoColor=white)
+![Offline](https://img.shields.io/badge/TTS-offline%20(pyttsx3)-2ea44f)
+![Platform](https://img.shields.io/badge/tested%20on-Windows-0078D6?logo=windows&logoColor=white)
 
-### Setup (Windows PowerShell)
+---
+
+## Contents
+
+- [How it works](#how-it-works)
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Build a Windows .exe](#build-a-windows-exe)
+- [Model evaluation](#model-evaluation)
+- [Project structure](#project-structure)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
+- [Author](#author)
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Webcam frame] --> B[YOLOv8n detection<br/>conf ≥ 0.70, IoU 0.50]
+    B --> C[Split frame into<br/>left / center / right]
+    C --> D[Pick nearest object<br/>per zone]
+    D --> E[Estimate distance<br/>from box height]
+    E --> F{Scene changed?<br/>cooldown passed?}
+    F -- yes --> G[Offline TTS<br/>background thread]
+    F -- no --> A
+    G --> A
+```
+
+1. **Detect.** Each frame goes through YOLOv8n (80 COCO classes) at 640 px. Detections under 0.70 confidence are dropped.
+2. **Locate.** The frame is split into three vertical zones. An object's horizontal center decides whether it is *on the left*, *ahead*, or *on the right*.
+3. **Prioritise.** Within each zone only the nearest object (largest bounding box) is kept, so the user hears at most three short phrases.
+4. **Estimate distance.** The box height as a fraction of frame height maps to a distance label:
+
+   | Box height / frame height | Spoken as |
+   |---|---|
+   | ≥ 60% | extremely close |
+   | ≥ 40% | very close |
+   | ≥ 25% | close |
+   | ≥ 12% | medium distance |
+   | < 12% | far away |
+
+5. **Announce.** `SceneChangeAnnouncer` speaks a new description only after a 3 s cooldown, and repeats an unchanged scene every 15 s as a reminder. Speech runs on its own thread through `pyttsx3`, so the video loop never blocks.
+
+## Features
+
+- Real-time object detection with YOLOv8n (weights download automatically on first run)
+- Spatial cues: left / ahead / right, plus a five-level distance estimate
+- Offline text-to-speech with `pyttsx3`; no internet or API keys needed at runtime
+- Change-based announcements with cooldown and periodic refresh
+- Debug overlay showing bounding boxes, confidence scores, zone dividers and the current spoken text
+- Works with a webcam index, a video file, or an IP/RTSP stream
+- Ships as a single Windows `.exe` via PyInstaller
+
+## Quick start
+
+**Requirements:** Python 3.10 or 3.11, a webcam, and speakers or headphones. Developed and tested on Windows; Linux and macOS should work but are untested.
+
 ```powershell
+git clone https://github.com/AnKIT7-ops/Echovisionnn.git
+cd Echovisionnn
+
 python -m venv .venv
-. .\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1          # Linux/macOS: source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
-```
 
-If pip builds wheels slowly on Windows, consider installing the prebuilt `opencv-python` wheel first, then others.
-
-### Run
-```powershell
 python -m src.main
 ```
-Press `q` in the preview window to quit. You can also close with Ctrl+C in the terminal.
 
-### Build a standalone Windows .exe
-Prereqs:
-- Python 3.10/3.11 (x64)
-- Visual C++ Build Tools
-- PowerShell
+A preview window opens and announcements start. Press **Q** in the window (or `Ctrl+C` in the terminal) to quit.
 
-Install builder:
+> The first launch downloads `yolov8n.pt` (about 6 MB) from Ultralytics, so it takes a little longer.
+
+## Configuration
+
+Camera and display settings live in [`config.py`](config.py):
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `CAMERA_SOURCE` | `0` | Webcam index, video file path, or stream URL |
+| `CAMERA_FRAME_WIDTH` / `HEIGHT` | `1280` × `720` | Capture resolution |
+| `DISPLAY_SCALE` | `1.0` | Resize the preview window |
+| `MODEL_PATH` | `yolov8n.pt` | Path to YOLO weights |
+
+Detection and speech tuning is in the source:
+
+| Where | Setting | Default |
+|---|---|---|
+| `src/main.py` | `CONF_THRESHOLD` | `0.70` |
+| `src/main.py` | `IOU_THRESHOLD` | `0.50` |
+| `src/main.py` | `IMG_SIZE` | `640` |
+| `src/main.py` | `TTSEngine(rate=...)` | `170` words/min |
+| `src/main.py` | `SceneChangeAnnouncer(cooldown_seconds, refresh_seconds)` | `3.0`, `15.0` |
+| `src/tts.py` | `voice_index` | system default voice |
+| `src/scene_change.py` | `distance_label()` thresholds | see table above |
+
+## Build a Windows .exe
+
+Run the app once first so `yolov8n.pt` exists in the repo root, then use the included script:
+
 ```powershell
-pip install pyinstaller
+.\build.ps1          # add -Clean to wipe old build/ and dist/ folders first
 ```
 
-Build from repo root:
+The script installs PyInstaller if needed and writes `dist\ConversationalGlasses.exe`, with the model weights and `config.py` bundled inside. Paths are resolved through `sys._MEIPASS`, so the exe runs from any folder. Expect a slow first start while it unpacks.
+
+<details>
+<summary>Manual PyInstaller command</summary>
+
 ```powershell
 pyinstaller --noconfirm --onefile --name ConversationalGlasses `
   --add-data "yolov8n.pt;." `
@@ -52,18 +132,66 @@ pyinstaller --noconfirm --onefile --name ConversationalGlasses `
   src/main.py
 ```
 
-Notes:
-- The `--add-data` entries bundle `yolov8n.pt` and `config.py`. Adjust if relocated.
-- The app resolves resources via a PyInstaller-safe path; first run can be slow.
+</details>
 
-The `.exe` will appear in `dist/`.
+## Model evaluation
 
-### Notes
-- The first run will download `yolov8n.pt` automatically from Ultralytics.
-- You can tune thresholds in `src/main.py`: `CONF_THRESHOLD`, `IOU_THRESHOLD`, and the `cooldown_seconds` in `SceneChangeAnnouncer`.
-- The TTS voice can be changed in `src/tts.py` by selecting a different `voice_index`.
+The pretrained YOLOv8n weights were validated on the COCO128 sample set (`datasets/coco128`). Results are saved in [`runs/detect/val`](runs/detect/val).
 
-### Troubleshooting
-- If the camera cannot be opened, try changing the index in `cv2.VideoCapture(0)` to `1` or `2`.
-- If you get GPU/CUDA errors and you're on CPU, ensure the Ultralytics install uses CPU by default (no extra config needed); performance on CPU is still fine with `yolov8n`.
-- If you don't hear speech, check your system sound output device and that `pyttsx3` is installed correctly.
+| Metric | Value |
+|---|---|
+| mAP@0.5 (all classes) | **0.605** |
+
+<p align="center">
+  <img src="runs/detect/val/PR_curve.png" width="48%" alt="Precision-recall curve"/>
+  <img src="runs/detect/val/val_batch0_pred.jpg" width="48%" alt="Sample predictions"/>
+</p>
+
+Confusion matrices and F1 / precision / recall curves are in the same folder.
+
+## Project structure
+
+```
+Echovisionnn/
+├── src/                    # Main application
+│   ├── main.py             # Camera loop, detection, overlay, entry point
+│   ├── scene_change.py     # Zone assignment, distance labels, announce logic
+│   └── tts.py              # Threaded, de-duplicating pyttsx3 wrapper
+├── vision/                 # Early prototype modules
+│   ├── detector.py         # Basic YOLO wrapper
+│   └── ocr.py              # Tesseract OCR (not wired in yet)
+├── speech/                 # Early prototype modules
+│   ├── tts.py              # Blocking pyttsx3 helper
+│   └── stt.py              # Speech-to-text via SpeechRecognition
+├── main.py                 # First prototype (left/center/right only, no distance)
+├── config.py               # Camera, model and display settings
+├── build.ps1               # PyInstaller build script
+├── datasets/coco128/       # Validation sample set
+├── runs/detect/val/        # Validation plots and predictions
+└── requirements.txt
+```
+
+`src/` is the current app. The root `main.py` with `vision/` and `speech/` is the earlier prototype, kept for the OCR and speech-input pieces that are still on the roadmap.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `Error: Cannot access camera.` | Set `CAMERA_SOURCE` in `config.py` to `1` or `2`, and close other apps using the webcam |
+| No speech | Check the system output device; on Linux install `espeak` (`sudo apt install espeak`) for `pyttsx3` |
+| `pyaudio` fails to install on Windows | It is only needed by the prototype's speech input. Run `pip install pipwin && pipwin install pyaudio`, or remove it from `requirements.txt` |
+| CUDA / GPU errors | Ultralytics falls back to CPU automatically; YOLOv8n runs fine on CPU |
+| Too many or too few announcements | Adjust `CONF_THRESHOLD`, or the cooldown and refresh times in `src/main.py` |
+
+## Roadmap
+
+- [ ] Read signs and labels aloud with OCR (`vision/ocr.py`)
+- [ ] Voice commands such as "what's in front of me?" (`speech/stt.py`)
+- [ ] Depth model or stereo camera for real distance in metres
+- [ ] Fine-tune on navigation classes COCO lacks (poles, stairs, doors, potholes)
+- [ ] Run on a Raspberry Pi or phone mounted on glasses
+
+## Author
+
+**Ankit Lakra**
+[GitHub](https://github.com/AnKIT7-ops) · [LinkedIn](https://linkedin.com/in/ankit-lakra) · ankitlakarhara@gmail.com
