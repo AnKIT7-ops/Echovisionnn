@@ -20,6 +20,7 @@ EchoVision watches a live camera feed with YOLOv8n, works out where each object 
 - [Configuration](#configuration)
 - [Build a Windows .exe](#build-a-windows-exe)
 - [Model evaluation](#model-evaluation)
+- [Performance](#performance)
 - [Project structure](#project-structure)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
@@ -54,7 +55,7 @@ flowchart LR
    | ≥ 12% | medium distance |
    | < 12% | far away |
 
-5. **Announce.** `SceneChangeAnnouncer` speaks a new description only after a 3 s cooldown, and repeats an unchanged scene every 15 s as a reminder. Speech runs on its own thread through `pyttsx3`, so the video loop never blocks.
+5. **Announce.** `SceneChangeAnnouncer` speaks a new description only after a 3 s cooldown, and repeats an unchanged scene every 15 s as a reminder. A new obstacle *close* or nearer straight ahead skips the cooldown (with a 1 s minimum gap) and cuts off whatever is being said. The object ahead is always spoken first. Speech runs on its own thread and only the latest message is kept, so the video loop never blocks and stale descriptions are never read out.
 
 ## Features
 
@@ -62,6 +63,8 @@ flowchart LR
 - Spatial cues: left / ahead / right, plus a five-level distance estimate
 - Offline text-to-speech with `pyttsx3`; no internet or API keys needed at runtime
 - Change-based announcements with cooldown and periodic refresh
+- Urgent warnings for close obstacles ahead interrupt current speech (Windows)
+- ~25 FPS on a laptop CPU, no GPU needed (see [Performance](#performance))
 - Debug overlay showing bounding boxes, confidence scores, zone dividers and the current spoken text
 - Works with a webcam index, a video file, or an IP/RTSP stream
 - Ships as a single Windows `.exe` via PyInstaller
@@ -105,7 +108,7 @@ Detection and speech tuning is in the source:
 | `src/main.py` | `IOU_THRESHOLD` | `0.50` |
 | `src/main.py` | `IMG_SIZE` | `640` |
 | `src/main.py` | `TTSEngine(rate=...)` | `170` words/min |
-| `src/main.py` | `SceneChangeAnnouncer(cooldown_seconds, refresh_seconds)` | `3.0`, `15.0` |
+| `src/main.py` | `SceneChangeAnnouncer(cooldown_seconds, refresh_seconds, urgent_gap_seconds)` | `3.0`, `15.0`, `1.0` |
 | `src/tts.py` | `voice_index` | system default voice |
 | `src/scene_change.py` | `distance_label()` thresholds | see table above |
 
@@ -149,6 +152,37 @@ The pretrained YOLOv8n weights were validated on the COCO128 sample set (`datase
 
 Confusion matrices and F1 / precision / recall curves are in the same folder.
 
+## Performance
+
+Measured on a Windows 11 laptop, **CPU only** (Intel, 16 threads, no GPU), PyTorch 2.11 CPU build, YOLOv8n at 640 px, webcam capturing 1280×720.
+
+**Live run** (the full app with preview window and speech, 30 s on the laptop webcam):
+
+| Metric | Value |
+|---|---|
+| FPS | **25.5** |
+| Frame time (mean / median / max) | **39.2 / 37.5 / 91.5 ms** |
+
+**Per-stage latency** (benchmark of the same pipeline without display and speech, 200 frames after a 10-frame warm-up):
+
+| Stage | Mean | p95 |
+|---|---|---|
+| Frame capture | 1.7 ms | 3.8 ms |
+| YOLOv8n inference (incl. pre/post-processing) | 40.2 ms | 55.3 ms |
+| Scene summary + overlay | 0.3 ms | 0.5 ms |
+| **Total per frame** | **42.2 ms** (23.7 FPS) | **57.2 ms** |
+
+Inference is about 95% of the frame time, so a GPU or an exported ONNX/OpenVINO model is where further speed would come from.
+
+**Speech latency:**
+
+| Case | Time until speech starts |
+|---|---|
+| New close obstacle ahead while another sentence is playing | **< 1 ms** after detection (current sentence is cut off) |
+| Normal scene change | after the 3 s cooldown, once the current sentence finishes |
+
+From the camera seeing a new obstacle to the warning starting is therefore about one frame (~40 ms), not counting the camera's own sensor delay.
+
 ## Project structure
 
 ```
@@ -156,7 +190,8 @@ Echovisionnn/
 ├── src/                    # Main application
 │   ├── main.py             # Camera loop, detection, overlay, entry point
 │   ├── scene_change.py     # Zone assignment, distance labels, announce logic
-│   └── tts.py              # Threaded, de-duplicating pyttsx3 wrapper
+│   ├── test_scene_change.py # Self-check for announce timing (python src/test_scene_change.py)
+│   └── tts.py              # Threaded latest-message-only TTS with urgent interrupt
 ├── vision/                 # Early prototype modules
 │   ├── detector.py         # Basic YOLO wrapper
 │   └── ocr.py              # Tesseract OCR (not wired in yet)

@@ -26,10 +26,10 @@ except Exception:
 
 try:
 	from .tts import TTSEngine
-	from .scene_change import summarize_scene, SceneChangeAnnouncer
+	from .scene_change import summarize_scene, SceneChangeAnnouncer, urgent_hazard
 except ImportError:
 	from tts import TTSEngine
-	from scene_change import summarize_scene, SceneChangeAnnouncer
+	from scene_change import summarize_scene, SceneChangeAnnouncer, urgent_hazard
 
 
 def resource_path(relative_path: str) -> str:
@@ -75,7 +75,7 @@ def draw_overlays(frame, detections):
 
 
 def main():
-	cap = cv2.VideoCapture(1)
+	cap = cv2.VideoCapture(CAMERA_SOURCE)
 	if not cap.isOpened():
 		print("Error: Cannot access camera.")
 		sys.exit(1)
@@ -120,7 +120,7 @@ def main():
 			description = summarize_scene(detections, w, h)
 			now_t = time.time()
 			if announcer.should_announce(description, now_t):
-				tts.speak(description)
+				tts.speak(description, interrupt=urgent_hazard(description) is not None)
 			draw_overlays(frame, detections)
 			cv2.putText(
 				frame,

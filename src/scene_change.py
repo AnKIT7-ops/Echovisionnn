@@ -49,7 +49,8 @@ def summarize_scene(
 				best_per_side[side] = (cls, box_h, (x1, y1, x2, y2))
 	phrases: List[str] = []
 	fh = frame_height if frame_height is not None else int(frame_width * 3 / 4)
-	for side in ("left", "center", "right"):
+	# Center first: it's the obstacle in the walking path
+	for side in ("center", "left", "right"):
 		item = best_per_side.get(side)
 		if not item:
 			continue
@@ -62,17 +63,32 @@ def summarize_scene(
 	return "; ".join(phrases)
 
 
+def urgent_hazard(description: str | None) -> str | None:
+	"""The center phrase if the obstacle ahead is close, very close or extremely close."""
+	for phrase in (description or "").split("; "):
+		if phrase.endswith(" close ahead"):
+			return phrase
+	return None
+
+
 class SceneChangeAnnouncer:
-	def __init__(self, cooldown_seconds: float = 4.0, refresh_seconds: float = 12.0):
+	def __init__(self, cooldown_seconds: float = 4.0, refresh_seconds: float = 12.0, urgent_gap_seconds: float = 1.0):
 		self._last_description: str | None = None
 		self._last_time: float = 0.0
 		self._cooldown = cooldown_seconds
 		self._refresh = refresh_seconds
+		self._urgent_gap = urgent_gap_seconds
 
 	def should_announce(self, description: str, now_time: float) -> bool:
 		if not description:
 			return False
 		if self._last_description is None:
+			self._last_description = description
+			self._last_time = now_time
+			return True
+		# A new close obstacle ahead skips the cooldown; the short gap stops boundary flicker from chattering
+		hazard = urgent_hazard(description)
+		if hazard and hazard != urgent_hazard(self._last_description) and (now_time - self._last_time) >= self._urgent_gap:
 			self._last_description = description
 			self._last_time = now_time
 			return True

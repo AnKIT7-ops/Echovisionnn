@@ -8,4 +8,4 @@ pyaudio
 numpy==1.26.4
 pandas
 playsound
-pyttsx3==2.90
+pyttsx3==2.99
