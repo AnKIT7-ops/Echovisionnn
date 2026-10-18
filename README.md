@@ -152,6 +152,29 @@ The pretrained YOLOv8n weights were validated on the COCO128 sample set (`datase
 
 Confusion matrices and F1 / precision / recall curves are in the same folder.
 
+## Training
+
+`train.py` fine-tunes the pretrained YOLOv8n on COCO128 (100 epochs, 640 px, batch 16, seed 0). On an RTX 4050 Laptop GPU the run takes about 5.5 minutes (~3.3 s per epoch). Everything it produces is in [`runs/detect/train`](runs/detect/train): per-epoch metrics (`results.csv`), hyperparameters (`args.yaml`), training batches, curves and the weights (`weights/best.pt`).
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # CUDA build
+python train.py
+```
+
+| Epoch | box loss | cls loss | mAP@0.5 | mAP@0.5:0.95 |
+|---|---|---|---|---|
+| 1 | 1.136 | 1.488 | 0.602 | 0.446 |
+| 25 | 0.984 | 0.902 | 0.841 | 0.652 |
+| 50 | 0.854 | 0.768 | 0.870 | 0.709 |
+| 90 (best) | — | — | **0.894** | **0.743** |
+| 100 | 0.864 | 0.719 | 0.872 | 0.726 |
+
+<p align="center">
+  <img src="runs/detect/train/results.png" width="80%" alt="Training loss and mAP curves"/>
+</p>
+
+COCO128 uses the same 128 images for training and validation, so these numbers show the model fitting that set, not better accuracy on new images. This run exercises the training pipeline. The app keeps using the pretrained `yolov8n.pt`. Fine-tuning on a separate, held-out obstacle dataset is the next step toward a real accuracy gain.
+
 ## Performance
 
 Measured on a Windows 11 laptop, **CPU only** (Intel, 16 threads, no GPU), PyTorch 2.11 CPU build, YOLOv8n at 640 px, webcam capturing 1280×720.
